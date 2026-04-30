@@ -42,15 +42,23 @@ const PROMPT_FILES = [
 // -- Fetch helpers -----------------------------------------------------------
 
 async function fetchJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 async function fetchText(url) {
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return res.text();
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
 }
 
 // -- Main --------------------------------------------------------------------
@@ -72,16 +80,32 @@ async function main() {
     }
   }
 
-  // 2. Fetch all three feeds
-  const [feedX, feedPodcasts, feedBlogs] = await Promise.all([
-    fetchJSON(FEED_X_URL),
-    fetchJSON(FEED_PODCASTS_URL),
-    fetchJSON(FEED_BLOGS_URL)
-  ]);
+  // 2. Fetch all three feeds (with local fallback when remote is unreachable)
+  const scriptDir = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
+  const localRepoDir = join(scriptDir, '..');
 
-  if (!feedX) errors.push('Could not fetch tweet feed');
-  if (!feedPodcasts) errors.push('Could not fetch podcast feed');
-  if (!feedBlogs) errors.push('Could not fetch blog feed');
+  async function loadFeed(url, localFilename, label) {
+    const remote = await fetchJSON(url);
+    if (remote) return remote;
+    const localPath = join(localRepoDir, localFilename);
+    if (existsSync(localPath)) {
+      try {
+        const text = await readFile(localPath, 'utf-8');
+        errors.push(`Using local fallback for ${label} (remote unreachable)`);
+        return JSON.parse(text);
+      } catch (err) {
+        errors.push(`Could not read local ${label}: ${err.message}`);
+      }
+    }
+    errors.push(`Could not fetch ${label}`);
+    return null;
+  }
+
+  const [feedX, feedPodcasts, feedBlogs] = await Promise.all([
+    loadFeed(FEED_X_URL, 'feed-x.json', 'tweet feed'),
+    loadFeed(FEED_PODCASTS_URL, 'feed-podcasts.json', 'podcast feed'),
+    loadFeed(FEED_BLOGS_URL, 'feed-blogs.json', 'blog feed')
+  ]);
 
   // 3. Load prompts with priority: user custom > remote (GitHub) > local default
   //
@@ -90,8 +114,7 @@ async function main() {
   // Otherwise, fetch the latest from GitHub so they get central improvements.
   // If GitHub is unreachable, fall back to the local copy shipped with the skill.
   const prompts = {};
-  const scriptDir = decodeURIComponent(new URL('.', import.meta.url).pathname);
-  const localPromptsDir = join(scriptDir, '..', 'prompts');
+  const localPromptsDir = join(localRepoDir, 'prompts');
   const userPromptsDir = join(USER_DIR, 'prompts');
 
   for (const filename of PROMPT_FILES) {
