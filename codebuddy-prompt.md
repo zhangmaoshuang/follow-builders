@@ -23,7 +23,43 @@ When you see any such request, execute Steps 1–6 below in order.
 
 ## Step 1 — Fetch the data
 
-Run this shell command and capture stdout:
+**Before running the script, make sure local fallback data is fresh.**
+
+Node's built-in `fetch` does NOT honor the system `HTTPS_PROXY` env var, so on
+machines behind a proxy / firewall (most users in China) the remote feed
+fetch will fail and the script falls back to whatever `feed-*.json` files
+are committed in the local repo. If those local files are stale, you will
+deliver outdated news with today's date — which is exactly what happened
+on prior runs.
+
+To prevent this, **always run a fast upstream sync first**:
+
+```bash
+cd "d:/AI/skills/follow-builders" && git fetch upstream main 2>&1 && git merge --ff-only upstream/main 2>&1
+```
+
+If the merge fails because of local modifications to feed files, discard
+them — they are auto-generated upstream artifacts, never user data:
+
+```bash
+git checkout -- feed-x.json feed-podcasts.json feed-blogs.json state-feed.json
+git merge --ff-only upstream/main
+```
+
+If the user has local commits on `main` (the user's own work), `--ff-only`
+will refuse and you must do a regular merge:
+
+```bash
+git merge upstream/main
+```
+
+If the upstream remote does not exist, configure it once:
+
+```bash
+git remote add upstream https://github.com/zarazhangrui/follow-builders.git
+```
+
+Then run the prepare script:
 
 ```bash
 cd "d:/AI/skills/follow-builders/scripts" && node prepare-digest.js
@@ -36,10 +72,22 @@ The output is a single JSON blob. Parse it. Key fields you will use:
 - `x` — array of builders, each with `name`, `handle`, `bio`, `tweets[]`
 - `podcasts` — array of podcast episodes (often empty)
 - `blogs` — array of blog posts (often empty)
+- `stats.feedGeneratedAt` — when the feed was generated (sanity check below)
 - `prompts.summarize_tweets` — rules for summarizing tweets
 - `prompts.summarize_podcast` — rules for summarizing podcasts
 - `prompts.digest_intro` — overall format rules
 - `prompts.translate` — translation rules (only if language is `zh` or `bilingual`)
+
+**Freshness sanity check (do this before remixing):**
+
+Compare `stats.feedGeneratedAt` with today's date.
+
+- Within ~36 hours: proceed normally.
+- Older than 36 hours **and** `errors` contains "Using local fallback":
+  the upstream cron likely hasn't run, OR the proxy is blocking the remote
+  fetch. Tell the user: "Feed is stale (generated <date>), upstream may not
+  have updated yet. Continue anyway?" — and wait for confirmation before
+  sending. Do NOT silently send stale data with today's date.
 
 If the script fails entirely, tell the user "无法拉取 feed，请检查网络代理（HTTPS_PROXY 是否生效）" and stop.
 
@@ -152,6 +200,18 @@ inbox (and spam folder; sender is `digest@resend.dev`)."
 - Do not invent tweets, builders, podcasts, or blog posts. If a builder has no
   substantive content, skip them silently.
 - Do not include builders / tweets that have no URL — `urls` are mandatory.
+- **Never `git add` or `git commit` `feed-x.json`, `feed-podcasts.json`,
+  `feed-blogs.json`, or `state-feed.json`.** These are upstream-generated
+  artifacts, not user data. If `git status` shows them as modified, discard
+  with `git checkout -- <file>` — never commit. Committing them will cause
+  merge conflicts on every future `git pull upstream main` and corrupt the
+  user's fork relative to upstream.
+- Do not run `node generate-feed.js`. That script writes to `feed-*.json`
+  and is meant to be run only by the upstream's GitHub Actions cron, not
+  on the user's machine.
+- Do not commit anything from a digest delivery run. The digest run is a
+  read-only data flow: read feeds → email → done. No commits should
+  result from delivering the daily news.
 
 ---
 
