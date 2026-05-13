@@ -3,3 +3,10 @@ scripts/node_modules/
 *.log
 .DS_Store
 .qoder/
+
+# Local digest run artifacts — never meant to be committed
+digest-*.json
+digest-*.txt
+fb-digest*
+scripts/_*.mjs
+scripts/_*.js
